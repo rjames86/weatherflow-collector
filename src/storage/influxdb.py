@@ -280,6 +280,8 @@ class InfluxDBStorage:
                     "Timestamp not provided, using current time"
                 )
 
+            logger_InfluxDBStorage.debug(f"Timestamp value: {timestamp}, type: {type(timestamp)}")
+
             # Sort tags for consistency
             sorted_tags = dict(sorted(tags.items()))
 
