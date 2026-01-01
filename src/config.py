@@ -603,7 +603,7 @@ WEATHERFLOW_COLLECTOR_CONSOLE_LOG_LEVELS = {
     "protocol": "INFO",
     "provider": "INFO",
     "station_metadata_manager": "INFO",
-    "storage": "INFO",
+    "storage": "DEBUG",
     "utils": "INFO",
     "websockets": "INFO",
     "vineyard_vantage": "INFO",
