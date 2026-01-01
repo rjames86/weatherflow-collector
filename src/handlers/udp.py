@@ -52,6 +52,7 @@ class UDPHandler(BaseDataHandler):
             "obs_sky": self.handle_obs_sky,
             "obs_st": self.handle_obs_st,
             "rapid_wind": self.handle_rapid_wind,
+            "evt_precip": self.handle_evt_precip,
         }
 
     async def process_data(self, full_data):
@@ -157,6 +158,90 @@ class UDPHandler(BaseDataHandler):
         else:
             logger_UDPHandler.warning(
                 f"Invalid or incomplete rapid_wind data received: {full_data}"
+            )
+
+    @utils.calculate_timestamp_delta("handle_evt_precip")
+    async def handle_evt_precip(self, full_data):
+        logger_UDPHandler.debug(f"Received evt_precip full data: {full_data}")
+
+        # Extract the nested 'data' dictionary
+        data = full_data.get("data", {})
+        device_id = data.get("device_id")
+        evt_data = data.get("evt", [])
+
+        if len(evt_data) >= 1:
+            timestamp = evt_data[0]  # The timestamp of the precipitation event
+
+            fields = {
+                "timestamp": timestamp,
+                # Add other relevant fields as needed
+            }
+
+            # Extract station information
+            station_info = full_data.get("station_info", {})
+            logger_UDPHandler.debug(f"Station info: {station_info}")
+
+            # Construct the tags
+            tags = {
+                "collector_type": self.collector_type,
+                "station_name": station_info.get("station_name"),
+                "station_latitude": station_info.get("station_latitude"),
+                "station_longitude": station_info.get("station_longitude"),
+                "station_elevation": station_info.get("station_elevation"),
+                "station_time_zone": station_info.get("station_time_zone"),
+            }
+
+            # Extract device information
+            device_info = full_data.get("device_info", {})
+            logger_UDPHandler.debug(f"Device info: {device_info}")
+
+            # Add device information as tags, if available
+            for key in [
+                "device_id",
+                "device_name",
+                "device_type",
+                "serial_number",
+            ]:
+                if key in device_info and device_info[key] is not None:
+                    tags[key] = device_info[key]
+
+            logger_UDPHandler.debug(f"Tags: {tags}")
+
+            fields = utils.normalize_fields(fields)
+
+            measurement = "weatherflow_evt_precip"
+
+            collector_data_with_meta = {
+                "data_type": "single",  # or "batch" for batch processing
+                "measurement": measurement,
+                "tags": tags,
+                "fields": fields,
+                "timestamp": timestamp,
+                # Include other necessary data or metadata
+            }
+
+            # Publish the data using the event manager
+            await self.event_manager.publish(
+                "influxdb_storage_event", collector_data_with_meta
+            )
+
+            logger_UDPHandler.debug(
+                f"Published {measurement} data to event manager for device {device_id}."
+            )
+
+            # Setting attirbutes for the delta timestamp decorator
+
+            # Loop through tags and set them as attributes
+            for key, value in tags.items():
+                setattr(self, f"current_{key}", value)
+
+            # Update the current state
+            self.current_timestamp = timestamp
+
+        else:
+            # Log a warning if the data is not in the expected format
+            logger_UDPHandler.warning(
+                f"Invalid evt_precip data format: {full_data}"
             )
 
     # @utils.measure_execution_time("handle_evt_strike")
