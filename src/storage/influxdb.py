@@ -280,7 +280,10 @@ class InfluxDBStorage:
                     "Timestamp not provided, using current time"
                 )
 
-            logger_InfluxDBStorage.debug(f"Timestamp value: {timestamp}, type: {type(timestamp)}")
+            # Convert float timestamps to int (InfluxDB requires integer timestamps for second precision)
+            if isinstance(timestamp, float):
+                timestamp = int(timestamp)
+
 
             # Sort tags for consistency
             sorted_tags = dict(sorted(tags.items()))
