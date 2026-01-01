@@ -45,6 +45,7 @@ Modifications may be required for use with other systems or data sources.
 
 import asyncio
 import config
+import os
 import threading
 import logger
 
@@ -67,7 +68,13 @@ from storage.influxdb import InfluxDBStorage
 from handlers.system_metrics import SystemMetricsHandler
 from config_validator import validate_all
 
-from vineyard_vantage.vineyard_vantage_handler import VineyardVantageHandler
+# Conditional import for vineyard_vantage
+VineyardVantageHandler = None
+if os.getenv("WEATHERFLOW_COLLECTOR_VINEYARD_VANTAGE_HANDLER_ENABLED", "False").lower() == "true":
+    try:
+        from vineyard_vantage.vineyard_vantage_handler import VineyardVantageHandler
+    except ImportError:
+        logger.get_module_logger().warning("vineyard_vantage module not found, handler will be disabled")
 
 
 # Initialize logger
