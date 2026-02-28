@@ -22,66 +22,64 @@ class RestImportCollector:
         self.collector_type = "collector_rest_import"
 
     async def fetch_daily_observations(self, station_id, specific_date):
-        try:
-            # Convert the specific date to epoch time for start and end of the day
-            start_epoch = int(datetime.strptime(specific_date, "%Y-%m-%d").timestamp())
-            end_epoch = start_epoch + 86400 - 1  # End of the day in epoch time
+        start_epoch = int(datetime.strptime(specific_date, "%Y-%m-%d").timestamp())
+        end_epoch = start_epoch + 86400 - 1
+        endpoint = f"/stn/{station_id}"
+        query_parameters = f"?time_start={start_epoch}&time_end={end_epoch}&bucket=1&units_temp=c&units_wind=mps&units_pressure=mb&units_precip=mm&units_distance=km"
+        url_daily_observations = f"{self.base_url}{endpoint}{query_parameters}&api_key={self.api_key}"
 
-            # Construct the API URL for daily observations
-            endpoint = f"/stn/{station_id}"
-            query_parameters = f"?time_start={start_epoch}&time_end={end_epoch}&bucket=1&units_temp=c&units_wind=mps&units_pressure=mb&units_precip=mm&units_distance=km"
-            api_key_parameter = f"&api_key={self.api_key}"
-            url_daily_observations = (
-                f"{self.base_url}{endpoint}{query_parameters}{api_key_parameter}"
-            )
+        logger_RestImportClient.debug(
+            f"Fetching daily observations for station ID {station_id} and date {specific_date}"
+        )
 
-            logger_RestImportClient.debug(
-                f"Fetching daily observations for station ID {station_id} and date {specific_date} from URL: {url_daily_observations}"
-            )
+        max_retries = config.WEATHERFLOW_COLLECTOR_UTILS_HTTP_FETCH_RETRIES
+        retry_wait = config.WEATHERFLOW_COLLECTOR_UTILS_HTTP_FETCH_RETRY_WAIT
 
-            response_data = await utils.fetch_data_from_url(
-                url_daily_observations, self.collector_type, self.event_manager
-            )
-            if response_data:
-                json_data = json.dumps(
-                    response_data
-                )  # Convert dictionary to JSON string
-                data_with_metadata = {
-                    "metadata": {
-                        "collector_type": self.collector_type,
-                        "station_id": station_id,
-                    },
-                    "data": json.loads(json_data),
-                }
-                await self.event_manager.publish(
-                    "collector_data_event",
-                    data_with_metadata,
-                    publisher="RestImportCollector.fetch_daily_observations",
+        for attempt in range(1, max_retries + 1):
+            try:
+                response_data = await utils.fetch_data_from_url(
+                    url_daily_observations, self.collector_type, self.event_manager
                 )
-                logger_RestImportClient.info(
-                    f"Published daily observations for station ID {station_id} and date {specific_date} to event manager"
-                )
-                return json_data  # Added to return the fetched JSON data
-            else:
-                logger_RestImportClient.warning(
-                    f"No daily observation data received for station ID {station_id} and date {specific_date}"
-                )
-                return None
+                if response_data:
+                    json_data = json.dumps(response_data)
+                    data_with_metadata = {
+                        "metadata": {
+                            "collector_type": self.collector_type,
+                            "station_id": station_id,
+                        },
+                        "data": json.loads(json_data),
+                    }
+                    await self.event_manager.publish(
+                        "collector_data_event",
+                        data_with_metadata,
+                        publisher="RestImportCollector.fetch_daily_observations",
+                    )
+                    logger_RestImportClient.info(
+                        f"Published daily observations for station ID {station_id} and date {specific_date} to event manager"
+                    )
+                    return json_data
+                else:
+                    logger_RestImportClient.warning(
+                        f"No daily observation data received for station ID {station_id} and date {specific_date}"
+                    )
+                    return None
 
-        except Exception as e:
-            logger_RestImportClient.error(f"Error fetching daily observations: {e}")
-            return None
-        finally:
-
-            pass
-            # Add a delay between requests
-            # delay_duration_ms = config.WEATHERFLOW_COLLECTOR_COLLECTOR_REST_IMPORT_FETCH_OBSERVATIONS_DELAY_MS
-            # logger_RestImportClient.debug(f"Sleeping for {delay_duration_ms} milliseconds before next request...")
-            # start_sleep_time = time.monotonic()  # Record the start time of the sleep
-            # await asyncio.sleep(delay_duration_ms / 1000)  # Convert milliseconds to seconds for asyncio.sleep
-            # end_sleep_time = time.monotonic()  # Record the end time of the sleep
-            # sleep_duration = end_sleep_time - start_sleep_time
-            # logger_RestImportClient.debug(f"Finished sleeping. Slept for {sleep_duration:.2f} seconds.")
+            except Exception as e:
+                if attempt < max_retries:
+                    wait = retry_wait * attempt
+                    logger_RestImportClient.warning(
+                        f"Error fetching daily observations for {specific_date} (attempt {attempt}/{max_retries}), retrying in {wait}s: {e}"
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    logger_RestImportClient.error(
+                        f"Error fetching daily observations for {specific_date} after {max_retries} attempts: {e}"
+                    )
+                    return None
+            finally:
+                delay_duration_ms = config.WEATHERFLOW_COLLECTOR_COLLECTOR_REST_IMPORT_FETCH_OBSERVATIONS_DELAY_MS
+                logger_RestImportClient.debug(f"Sleeping for {delay_duration_ms} milliseconds before next request...")
+                await asyncio.sleep(delay_duration_ms / 1000)
 
     async def fetch_date_range(self, station_id):
         try:
@@ -122,7 +120,16 @@ class RestImportCollector:
 
             for station_id, station_info in station_metadata.items():
                 if station_info.get("enabled", False):
-                    first_date, last_date = await self.fetch_date_range(station_id)
+                    start_date_str = config.WEATHERFLOW_COLLECTOR_IMPORT_START_DATE
+                    end_date_str = config.WEATHERFLOW_COLLECTOR_IMPORT_END_DATE
+
+                    if start_date_str and end_date_str:
+                        first_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+                        last_date = datetime.strptime(end_date_str, "%Y-%m-%d")
+                    else:
+                        api_first, api_last = await self.fetch_date_range(station_id)
+                        first_date = datetime.strptime(start_date_str, "%Y-%m-%d") if start_date_str else api_first
+                        last_date = datetime.strptime(end_date_str, "%Y-%m-%d") if end_date_str else api_last
 
                     if first_date and last_date:
                         current_date = first_date
